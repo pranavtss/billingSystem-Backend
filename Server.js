@@ -38,23 +38,22 @@ app.post("/", async (req, res) => {
     const { userID, userpassword } = req.body;
 
     if (!userID || !userpassword) {
-      return res.status(400).json({ message: "User ID and Password are required" });
+      return res.json({ message: "User ID and Password are required" });
     }
 
     const user = await Login.findOne({ userID });
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.json({ message: "User not found" });
     }
 
     const isMatch = await bcrypt.compare(userpassword, user.userpassword);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.json({ message: "Invalid credentials" });
     }
 
     const token = jwt.sign(
       { userID: user.userID, role: user.role },
       secretKey,
-      { expiresIn: "1h" }
     );
 
     return res.status(200).json({
@@ -65,13 +64,13 @@ app.post("/", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.json({ message: "Internal server error" });
   }
 });
 
 
 // --------------------- ADMIN ROUTE ---------------------
-// Handles creation of users, customers, fish
+
 app.post("/admin", async (req, res) => {
   try {
     const { type } = req.body;
@@ -79,59 +78,63 @@ app.post("/admin", async (req, res) => {
     if (type === "customer") {
       const { customerID, customername, customerphone } = req.body;
       if (!customerID || !customername || !customerphone) {
-        return res.status(400).json({ message: "All customer fields are required" });
+        return res.json({ message: "All customer fields are required" });
       }
       const newCustomer = new Customer({ customerID, customername, customerphone });
       await newCustomer.save();
-      return res.status(201).json({ message: "Customer added successfully" });
+      return res.json({ message: "Customer added successfully" });
     }
 
 
     if (type === "fish") {
       const { fishID, fishName, fishPrice } = req.body;
       if (!fishID || !fishName || fishPrice === undefined) {
-        return res.status(400).json({ message: "All fish fields are required" });
+        return res.json({ message: "All fish fields are required" });
       }
       const newFish = new Fish({ fishID, fishName, fishPrice });
       await newFish.save();
-      return res.status(201).json({ message: "Fish added successfully" });
+      return res.json({ message: "Fish added successfully" });
     }
     
 
     if (type === "user") {
       const { userID, username, userpassword } = req.body;
       if (!userID || !username || !userpassword) {
-        return res.status(400).json({ message: "All user fields are required" });
+        return res.json({ message: "All user fields are required" });
       }
       const hashedPassword = await bcrypt.hash(userpassword, 10);
       const newUser = new Login({ userID, username, userpassword: hashedPassword });
       await newUser.save();
-      return res.status(201).json({ message: "User added successfully" });
+      return res.json({ message: "User added successfully" });
     }
-
-
-    if (type === "editfish") {
-      const { fishID, newprice } = req.body;
-      if (!fishID || newprice === undefined) {
-        return res.status(400).json({ message: "Fish ID and new price are required" });
-      }
-      const fish = await Fish.findOne({ fishID });
-      if (!fish) {
-        return res.status(404).json({ message: "Fish not found" });
-      }
-      await Fish.updateOne({ fishID }, { $set: { fishPrice: newprice } });
-      return res.status(200).json({ message: "Fish price updated successfully" });
-    }
-    
-
-    return res.status(400).json({ message: "Invalid type" });
+    return res.json({ message: "Invalid type" });
 
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.json({ message: "Internal server error" });
   }
 });
 
+app.patch("/admin", async (req, res) => {
+  try {
+    const { type } = req.body;
+    if (type === "editfish") {
+      const { fishID, newprice } = req.body;
+      if (!fishID || newprice === undefined) {
+        return res.json({ message: "Fish ID and new price are required" });
+      }
+      const price = new FishPrice({fishID , newprice});
+      await price.save();
+
+      return res.json({ message: "Fish price updated successfully" });
+    }
+
+    return res.json({ message: "Invalid type" });
+  } catch (err) {
+    console.error(err);
+    return res.json({ message: "Internal server error" });
+  }
+});
 
 
 
@@ -156,6 +159,23 @@ async function createAdmin() {
 }
 
 //---------------------------------get-----------------------------------------
+
+
+app.get("/admin" , async(req,res) => {
+  try{
+    const {type} = req.query;
+
+    if(type === "fish"){
+      const fishes = await Fish.find({});
+      res.json(fishes);
+    }
+
+  } catch (err) {
+    console.error(err);
+    res.json({ message: "Internal server error" });
+  }
+})
+
 
 
 
