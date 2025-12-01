@@ -1,10 +1,13 @@
 const mongoose = require("mongoose");
 
 const contentSchema = new mongoose.Schema({
-  customerID:{type :Number , required : true},
-  fishID : {type:Number , required : true},
+  customerID:{type :String , required : true},
+  fishID : {type:String , required : true},
   quantity : {type : Number , required : true},
-  totalAmount:{type: Number },
+  unit:{type:String , required : true},
+  kgprice:{type: Number ,default : 0},
+  boxprice:{type: Number ,default : 0},
+  totalPrice:{type: Number ,required : true},
   date:{type: Date, default: Date.now}
 } , {timestamps : true});
 
