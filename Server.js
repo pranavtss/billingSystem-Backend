@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -32,16 +33,15 @@ const secretKey = "FishApp";
 
 
 // MongoDB connection
-mongoose.connect("mongodb://localhost:27017/BillingSystem", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
+
+mongoose.connect(MONGODB_URI)
 .then(() => {
-  console.log("Connected to MongoDB");
+  console.log("Connected to MongoDB Atlas");
   createAdmin();
 })
 .catch((err) => {
-  console.log({ "Error connecting to MongoDB": err });
+  console.error("Error connecting to MongoDB:", err);
 });
 
 
@@ -245,7 +245,7 @@ app.post("/admin", async (req, res) => {
     // Submit purchases for a customer into History and remove them from Purchase
     if (type === "submittohistory") {
       try {
-        const { customerID, items = [] } = req.body;
+        const { customerID, items = [], userID: submittedBy } = req.body;
 
         if (!customerID) {
           return res.status(400).json({ ok: false, message: "Customer ID is required" });
@@ -256,6 +256,23 @@ app.post("/admin", async (req, res) => {
         const purchases = await Purchase.find({ customerID });
 
         const customerName = customer ? customer.customername : "Unknown";
+        const customerphone = customer ? customer.customerphone : undefined;
+
+        // resolve user info once and reuse, ensuring username is stored even if user record is deleted later
+        const userCache = new Map();
+        const resolveUser = async (uid) => {
+          if (!uid) return null;
+          if (userCache.has(uid)) return userCache.get(uid);
+          const found = await Login.findOne({ userID: uid });
+          const val = found
+            ? { userID: found.userID, username: found.username || found.userID, role: found.role }
+            : { userID: uid, username: String(uid) };
+          userCache.set(uid, val);
+          return val;
+        };
+
+        const billedUserId = submittedBy || (purchases[0]?.userID) || (items[0]?.userID);
+        const billedBy = await resolveUser(billedUserId);
 
         // build items array combining server purchases + optional client items
         const itemsArray = [];
@@ -265,6 +282,7 @@ app.post("/admin", async (req, res) => {
           const fish = await Fish.findOne({ fishID: p.fishID });
           const unitNorm = String(p.unit || "kg");
           const price = unitNorm === 'box' ? Number(p.boxPrice) || 0 : Number(p.kgPrice) || 0;
+          const itemUser = await resolveUser(p.userID || billedBy?.userID);
           itemsArray.push({
             fishID: p.fishID,
             fishName: fish ? (fish.fishName || fish.name) : p.fishID,
@@ -274,7 +292,10 @@ app.post("/admin", async (req, res) => {
             boxprice: Number(p.boxPrice) || 0,
             price,
             totalPrice: Number(p.totalPrice) || (Number(p.quantity) * price) || 0,
-            userID: p.userID || undefined,
+            userID: itemUser?.userID,
+            userName: itemUser?.username,
+            addedBy: itemUser,
+            addedAt: p.createdAt || new Date(),
           });
         }
 
@@ -285,6 +306,7 @@ app.post("/admin", async (req, res) => {
             const unitNorm = String(it.unit || "kg");
             const price = Number(it.price ?? it.kgprice ?? it.boxprice) || 0;
             const fish = await Fish.findOne({ fishID: it.fishID ?? it.fishId });
+            const itemUser = await resolveUser(it.userID || billedBy?.userID);
             itemsArray.push({
               fishID: it.fishID ?? it.fishId ?? "",
               fishName: fish ? (fish.fishName || fish.name) : (it.fishName || it.fishId || it.fishID || ""),
@@ -294,7 +316,10 @@ app.post("/admin", async (req, res) => {
               boxprice: unitNorm === 'box' ? price : 0,
               price,
               totalPrice: Number(it.totalPrice) || qty * price || 0,
-              userID: it.userID || undefined,
+              userID: itemUser?.userID,
+              userName: itemUser?.username,
+              addedBy: itemUser,
+              addedAt: it.addedAt || new Date(),
             });
           }
         }
@@ -308,8 +333,10 @@ app.post("/admin", async (req, res) => {
         const historyDoc = new History({
           customerID,
           customername: customerName,
+          customerphone,
           items: itemsArray,
           totalPrice: billTotal,
+          billedBy,
           date: new Date(),
         });
 
@@ -675,11 +702,12 @@ app.get("/admin", async (req, res) => {
 
 app.get("/history" , async(req,res)  => {
   try{
-    const history = await History.find({});
+    const history = await History.find({}).sort({ createdAt: -1 });
     return res.json({ok:true , data:history});
   }
   catch(err){
     console.log("Error fetching history" , err);
+    return res.status(500).json({ok:false, message:"Error fetching history"});
   }
 })
 
