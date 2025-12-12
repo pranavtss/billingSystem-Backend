@@ -14,7 +14,19 @@ const Purchase = require("./schema/addpurchaseschema");
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+// Manual CORS handler to ensure PATCH is explicitly allowed
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
 
 const secretKey = "FishApp";
 
@@ -95,6 +107,7 @@ app.post("/", async (req, res) => {
 app.post("/admin", async (req, res) => {
   try {
     const { type } = req.body;
+    console.log("POST /admin received type:", type, "Type of type:", typeof type, "Body:", JSON.stringify(req.body));
 
     // Add customer
     if (type === "customer") {
@@ -109,26 +122,32 @@ app.post("/admin", async (req, res) => {
 
     // Add fish
     if (type === "addfish") {
-      const { fishID, fishName, fishunit, kgPrice, boxPrice } = req.body;
+      const { fishID, fishName, kgPrice, boxPrice } = req.body;
+      console.log("Received add fish request:", { fishID, fishName, kgPrice, boxPrice });
 
       if (!fishID || !fishName) {
         return res.status(400).json({ ok: false, msg: "Fish ID and name are required" });
       }
 
-      const unit = String(fishunit || "").trim().toLowerCase();
-      if (unit !== "kg" && unit !== "box") {
-        return res.status(400).json({ ok: false, msg: "fishunit must be 'kg' or 'box'" });
+      // Convert to numbers, treating only undefined/null/empty string as "not provided"
+      const parsedKg = (kgPrice === undefined || kgPrice === null || kgPrice === "")
+        ? 0
+        : Number(kgPrice);
+      const parsedBox = (boxPrice === undefined || boxPrice === null || boxPrice === "")
+        ? 0
+        : Number(boxPrice);
+      console.log("Parsed prices:", { parsedKg, parsedBox });
+
+      if (parsedKg === 0 && parsedBox === 0) {
+        return res.status(400).json({ ok: false, msg: "Provide at least one price (kg or box)" });
       }
 
-      // Determine the provided price based on unit
-      if (unit === "kg") {
-        if (kgPrice === undefined || kgPrice === null || kgPrice === "") {
-          return res.status(400).json({ ok: false, msg: "kgPrice is required for unit 'kg'" });
-        }
-      } else {
-        if (boxPrice === undefined || boxPrice === null || boxPrice === "") {
-          return res.status(400).json({ ok: false, msg: "boxPrice is required for unit 'box'" });
-        }
+      if (Number.isNaN(parsedKg) || Number.isNaN(parsedBox)) {
+        return res.status(400).json({ ok: false, msg: "Prices must be valid numbers" });
+      }
+
+      if (parsedKg < 0 || parsedBox < 0) {
+        return res.status(400).json({ ok: false, msg: "Prices cannot be negative" });
       }
 
       const existing = await Fish.findOne({ fishID });
@@ -136,15 +155,19 @@ app.post("/admin", async (req, res) => {
         return res.status(400).json({ ok: false, msg: "Fish ID already exists" });
       }
 
-      const newFish = new Fish({
+      const legacyUnit = parsedKg > 0 ? "kg" : "box";
+      const fishData = {
         fishID,
         fishName,
-        fishunit: unit,
-        kgPrice: unit === "kg" ? Number(kgPrice) : 0,
-        boxPrice: unit === "box" ? Number(boxPrice) : 0,
-      });
+        fishunit: legacyUnit,
+        kgPrice: parsedKg,
+        boxPrice: parsedBox,
+      };
+      console.log("Creating fish with data:", fishData);
+      const newFish = new Fish(fishData);
 
       await newFish.save();
+      console.log("Saved fish:", newFish.toObject());
       return res.status(201).json({ ok: true, msg: "Fish added successfully", fish: newFish });
     }
 
@@ -158,6 +181,52 @@ app.post("/admin", async (req, res) => {
       const newUser = new Login({ userID, username, userpassword: hashedPassword });
       await newUser.save();
       return res.json({ message: "User added successfully" });
+    }
+
+    // Edit fish price
+    if (type === "editfish") {
+      const { fishID, fishName, kgPrice, boxPrice } = req.body;
+
+      if (!fishID && !fishName) {
+        return res.status(400).json({ ok: false, message: "Provide fishID or fishName to update" });
+      }
+
+      const fishQuery = fishID ? { fishID } : { fishName };
+      const fish = await Fish.findOne(fishQuery);
+      if (!fish) {
+        return res.status(404).json({ ok: false, message: "Fish not found" });
+      }
+
+      // Build update object only with provided values
+      const updateData = {};
+      
+      if (kgPrice !== undefined && kgPrice !== null && kgPrice !== "") {
+        const parsedKg = Number(kgPrice);
+        if (Number.isNaN(parsedKg) || parsedKg < 0) {
+          return res.status(400).json({ ok: false, message: "Invalid kg price" });
+        }
+        updateData.kgPrice = parsedKg;
+      }
+      
+      if (boxPrice !== undefined && boxPrice !== null && boxPrice !== "") {
+        const parsedBox = Number(boxPrice);
+        if (Number.isNaN(parsedBox) || parsedBox < 0) {
+          return res.status(400).json({ ok: false, message: "Invalid box price" });
+        }
+        updateData.boxPrice = parsedBox;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ ok: false, message: "Provide at least one price to update" });
+      }
+
+      // Determine unit based on which price is higher
+      const finalKg = updateData.kgPrice !== undefined ? updateData.kgPrice : fish.kgPrice;
+      const finalBox = updateData.boxPrice !== undefined ? updateData.boxPrice : fish.boxPrice;
+      updateData.fishunit = finalKg > 0 ? "kg" : "box";
+
+      const updated = await Fish.findOneAndUpdate(fishQuery, updateData, { new: true });
+      return res.json({ ok: true, message: "Fish price updated successfully", data: updated });
     }
 
     // Delete fish
@@ -257,6 +326,65 @@ app.post("/admin", async (req, res) => {
       }
     }
 
+    // Edit Bill
+    if (type === "editBill") {
+      const { _id, newPrice } = req.body;
+      if (!_id || newPrice === undefined || newPrice === "") {
+        return res.status(400).json({ ok: false, message: "Purchase ID and new price are required" });
+      }
+
+      const purchase = await Purchase.findById(_id);
+      if (!purchase) {
+        return res.status(404).json({ ok: false, message: "Purchase not found" });
+      }
+
+      const parsedPrice = Number(newPrice);
+      if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+        return res.status(400).json({ ok: false, message: "newPrice must be a non-negative number" });
+      }
+
+      const unitNorm = String(purchase.unit || "").toLowerCase();
+      let updateData = {};
+      if (unitNorm === 'kg') {
+        updateData.kgPrice = parsedPrice;
+        updateData.boxPrice = 0;
+      } else if (unitNorm === 'box') {
+        updateData.boxPrice = parsedPrice;
+        updateData.kgPrice = 0;
+      } else {
+        return res.status(400).json({ ok: false, message: "Invalid unit in purchase record" });
+      }
+
+      const qtyNum = Number(purchase.quantity) || 0;
+      updateData.totalPrice = qtyNum * parsedPrice;
+
+      const saved = await Purchase.findByIdAndUpdate(_id, updateData, { new: true });
+      return res.json({ ok: true, message: "Purchase updated successfully", data: saved });
+    }
+
+    //  Edit customer
+    if (type === "editcustomer") {
+      console.log("✅ INSIDE editcustomer block in POST route");
+      const { customerID, customername, customerphone } = req.body;
+      if (!customerID) {
+        return res.status(400).json({ message: "Customer ID is required" });
+      }
+      if (!customername || String(customername).trim() === "") {
+        return res.status(400).json({ message: "Customer name is required" });
+      }
+      if (!customerphone || String(customerphone).trim() === "") {
+        return res.status(400).json({ message: "Customer phone is required" });
+      }
+      const updated = await Customer.findOneAndUpdate(
+        { customerID },
+        { customername, customerphone },
+        { new: true }
+      );
+      if (!updated) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      return res.json({ message: "Customer updated successfully", data: updated });
+    }
 
     return res.json({ message: "Invalid type" });
 
@@ -265,7 +393,6 @@ app.post("/admin", async (req, res) => {
     return res.json({ message: "Internal server error" });
   }
 });
-//----------------------------------PATCH------------------------------------------//
 
 app.patch("/admin", async (req, res) => {
   try {
@@ -275,21 +402,42 @@ app.patch("/admin", async (req, res) => {
 
     //  Edit fish
     if (type === "editfish") {
-      const { fishID, fishunit, newprice } = req.body;
+      const { fishID, kgPrice, boxPrice } = req.body;
+      console.log("Edit fish request:", { fishID, kgPrice, boxPrice });
 
-      if (!fishID || !fishunit || newprice === undefined || newprice === "") {
-        return res.status(400).json({ ok: false, message: "Fish ID, unit, and new price are required" });
+      if (!fishID) {
+        return res.status(400).json({ ok: false, message: "Fish ID is required" });
       }
 
-      const unit = String(fishunit || "").trim().toLowerCase();
-      if (unit !== "kg" && unit !== "box") {
-        return res.status(400).json({ ok: false, message: "fishunit must be 'kg' or 'box'" });
+      const parsedKg = (kgPrice === undefined || kgPrice === null || kgPrice === "")
+        ? null
+        : Number(kgPrice);
+      const parsedBox = (boxPrice === undefined || boxPrice === null || boxPrice === "")
+        ? null
+        : Number(boxPrice);
+
+      if (parsedKg === null && parsedBox === null) {
+        return res.status(400).json({ ok: false, message: "Provide at least one price to update" });
       }
 
-      // prepare the update field and zero the other price to avoid confusion
-      const updateField = unit === "kg"
-        ? { kgPrice: Number(newprice), boxPrice: 0 }
-        : { boxPrice: Number(newprice), kgPrice: 0 };
+      if ((parsedKg !== null && Number.isNaN(parsedKg)) || (parsedBox !== null && Number.isNaN(parsedBox))) {
+        return res.status(400).json({ ok: false, message: "Prices must be valid numbers" });
+      }
+
+      if ((parsedKg !== null && parsedKg < 0) || (parsedBox !== null && parsedBox < 0)) {
+        return res.status(400).json({ ok: false, message: "Prices cannot be negative" });
+      }
+
+      // Only update fields that have values (non-null)
+      const updateField = {};
+      if (parsedKg !== null) {
+        updateField.kgPrice = parsedKg;
+      }
+      if (parsedBox !== null) {
+        updateField.boxPrice = parsedBox;
+      }
+
+      console.log("Update fields:", updateField);
 
       try {
         const updatedFish = await Fish.findOneAndUpdate(
@@ -301,6 +449,7 @@ app.patch("/admin", async (req, res) => {
         if (!updatedFish) {
           return res.status(404).json({ ok: false, message: "Fish not found" });
         }
+        console.log("Updated fish:", updatedFish.toObject());
         return res.json({ ok: true, message: "Fish price updated successfully", data: updatedFish });
       } catch (err) {
         console.error("Error updating fish:", err);
@@ -312,9 +461,16 @@ app.patch("/admin", async (req, res) => {
 
     //  Edit customer
     if (type === "editcustomer") {
+      console.log("✅ INSIDE editcustomer block in POST route");
       const { customerID, customername, customerphone } = req.body;
       if (!customerID) {
-        return res.json({ message: "Customer ID is required" });
+        return res.status(400).json({ message: "Customer ID is required" });
+      }
+      if (!customername || String(customername).trim() === "") {
+        return res.status(400).json({ message: "Customer name is required" });
+      }
+      if (!customerphone || String(customerphone).trim() === "") {
+        return res.status(400).json({ message: "Customer phone is required" });
       }
       const updated = await Customer.findOneAndUpdate(
         { customerID },
@@ -322,7 +478,7 @@ app.patch("/admin", async (req, res) => {
         { new: true }
       );
       if (!updated) {
-        return res.json({ message: "Customer not found" });
+        return res.status(404).json({ message: "Customer not found" });
       }
       return res.json({ message: "Customer updated successfully", data: updated });
     }
@@ -363,14 +519,35 @@ app.patch("/admin", async (req, res) => {
       return res.json({ ok: true, message: "Purchase updated successfully", data: saved });
     }
 
+    //  Edit customer
+    if (type === "editcustomer") {
+      const { customerID, customername, customerphone } = req.body;
+      if (!customerID) {
+        return res.status(400).json({ message: "Customer ID is required" });
+      }
+      if (!customername || String(customername).trim() === "") {
+        return res.status(400).json({ message: "Customer name is required" });
+      }
+      if (!customerphone || String(customerphone).trim() === "") {
+        return res.status(400).json({ message: "Customer phone is required" });
+      }
+      const updated = await Customer.findOneAndUpdate(
+        { customerID },
+        { customername, customerphone },
+        { new: true }
+      );
+      if (!updated) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      return res.json({ message: "Customer updated successfully", data: updated });
+    }
+
     return res.json({ message: "Invalid type" });
   } catch (err) {
     console.error(err);
     return res.json({ message: "Internal server error" });
   }
 });
-
-//--------------------------------Delete---------------------------------------//
 
 app.delete("/admin" ,async(req,res) => {
   try{
@@ -379,7 +556,6 @@ app.delete("/admin" ,async(req,res) => {
     const body = req.body || {};
     const query = req.query || {};
 
-    //---------------------Customer------------------//
     if(type === "deletecustomer"){
       const customerID = body.customerID || query.customerID;
       if(!customerID){
@@ -389,10 +565,16 @@ app.delete("/admin" ,async(req,res) => {
       if(!deleted){
         return res.json({message:"Customer not found"});
       }
+      
+      // Delete all history records for this customer
+      await History.deleteMany({customerID});
+      
+      // Delete all pending purchases for this customer
+      await Purchase.deleteMany({customerID});
+      
       return res.json({message:"Customer deleted successfully"});
     }
 
-    //---------------------User------------------//
     if(type === "deleteuser"){
       const userID = body.userID || query.userID;
       console.log("Deleting user with ID:", userID);
@@ -407,7 +589,6 @@ app.delete("/admin" ,async(req,res) => {
       return res.json({message:"User deleted successfully"});
     }
 
-    //---------------------Fish------------------//
     if(type === "deletefish"){
       const fishID = body.fishID || query.fishID;
       if(!fishID){
@@ -439,12 +620,6 @@ app.delete("/admin" ,async(req,res) => {
     return res.json({message:"Internal server error" });
   }
 })
-
-
-
-
-//---------------------------------get-----------------------------------------
-
 
 app.get("/admin", async (req, res) => {
   try {
@@ -507,11 +682,6 @@ app.get("/history" , async(req,res)  => {
     console.log("Error fetching history" , err);
   }
 })
-
-
-//---------------------USER--------------------------//
-
-//-------------POST-------------------//
 
 app.post("/user", async (req, res) => {
   try {
