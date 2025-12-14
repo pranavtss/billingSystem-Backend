@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const helmet = require("helmet");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
@@ -16,14 +17,17 @@ const Purchase = require("./schema/addpurchaseschema");
 const app = express();
 app.use(express.json());
 
-// Manual CORS handler to ensure PATCH is explicitly allowed
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5174';
+app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
+
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers');
-  
   if (req.method === 'OPTIONS') {
+    res.header('Access-Control-Allow-Origin', FRONTEND_ORIGIN);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     return res.status(204).end();
   }
   next();
@@ -31,9 +35,10 @@ app.use((req, res, next) => {
 
 const secretKey = "FishApp";
 
-
-// MongoDB connection
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
+if (!process.env.MONGODB_URI) {
+  console.warn("MONGODB_URI not set in .env; using local fallback.");
+}
 
 mongoose.connect(MONGODB_URI)
 .then(() => {
@@ -45,7 +50,20 @@ mongoose.connect(MONGODB_URI)
 });
 
 
-// --------------------- CREATE ADMIN ---------------------
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true, status: 'healthy' });
+});
+app.get('/readyz', async (req, res) => {
+  try {
+    await mongoose.connection.db.admin().ping();
+    res.status(200).json({ ok: true, status: 'ready' });
+  } catch (err) {
+    res.status(503).json({ ok: false, status: 'not-ready', message: String(err?.message || err) });
+  }
+});
+
+
+
 async function createAdmin() {
   try {
     const existingAdmin = await Login.findOne({ userID: "admin" });
@@ -65,23 +83,23 @@ async function createAdmin() {
 }
 
 
-// --------------------- LOGIN ROUTE ---------------------
+
 app.post("/", async (req, res) => {
   try {
     const { userID, userpassword } = req.body;
 
     if (!userID || !userpassword) {
-      return res.json({ message: "User ID and Password are required" });
+      return res.status(400).json({ ok: false, message: "User ID and Password are required" });
     }
 
     const user = await Login.findOne({ userID });
     if (!user) {
-      return res.json({ message: "User not found" });
+      return res.status(404).json({ ok: false, message: "User not found" });
     }
 
     const isMatch = await bcrypt.compare(userpassword, user.userpassword);
     if (!isMatch) {
-      return res.json({ message: "Invalid credentials" });
+      return res.status(401).json({ ok: false, message: "Invalid credentials" });
     }
 
     const token = jwt.sign(
@@ -90,37 +108,45 @@ app.post("/", async (req, res) => {
     );
 
     return res.status(200).json({
+      ok: true,
       message: "Login successful",
       token,
       role: user.role,
     });
 
   } catch (err) {
-    console.error(err);
-    return res.json({ message: "Internal server error" });
+    console.error("LOGIN error:", err);
+    return res.status(500).json({ ok: false, message: "Internal server error" });
   }
 });
 
 
-// --------------------- POST ---------------------
+
 
 app.post("/admin", async (req, res) => {
   try {
     const { type } = req.body;
     console.log("POST /admin received type:", type, "Type of type:", typeof type, "Body:", JSON.stringify(req.body));
 
-    // Add customer
+    
     if (type === "customer") {
       const { customerID, customername, customerphone } = req.body;
       if (!customerID || !customername || !customerphone) {
         return res.json({ message: "All customer fields are required" });
       }
+      
+      
+      const letterCount = (String(customerID).match(/[a-zA-Z]/g) || []).length;
+      if (letterCount > 2) {
+        return res.json({ message: "Customer ID can contain maximum 2 alphabets" });
+      }
+      
       const newCustomer = new Customer({ customerID, customername, customerphone });
       await newCustomer.save();
       return res.json({ message: "Customer added successfully" });
     }
 
-    // Add fish
+    
     if (type === "addfish") {
       const { fishID, fishName, kgPrice, boxPrice } = req.body;
       console.log("Received add fish request:", { fishID, fishName, kgPrice, boxPrice });
@@ -128,8 +154,14 @@ app.post("/admin", async (req, res) => {
       if (!fishID || !fishName) {
         return res.status(400).json({ ok: false, msg: "Fish ID and name are required" });
       }
+      
+      
+      const letterCount = (String(fishID).match(/[a-zA-Z]/g) || []).length;
+      if (letterCount > 2) {
+        return res.status(400).json({ ok: false, msg: "Fish ID can contain maximum 2 alphabets" });
+      }
 
-      // Convert to numbers, treating only undefined/null/empty string as "not provided"
+      
       const parsedKg = (kgPrice === undefined || kgPrice === null || kgPrice === "")
         ? 0
         : Number(kgPrice);
@@ -171,19 +203,26 @@ app.post("/admin", async (req, res) => {
       return res.status(201).json({ ok: true, msg: "Fish added successfully", fish: newFish });
     }
 
-    // Add user
+    
     if (type === "user") {
       const { userID, username, userpassword } = req.body;
       if (!userID || !username || !userpassword) {
         return res.json({ message: "All user fields are required" });
       }
+      
+      
+      const letterCount = (String(userID).match(/[a-zA-Z]/g) || []).length;
+      if (letterCount > 2) {
+        return res.json({ message: "User ID can contain maximum 2 alphabets" });
+      }
+      
       const hashedPassword = await bcrypt.hash(userpassword, 10);
       const newUser = new Login({ userID, username, userpassword: hashedPassword });
       await newUser.save();
       return res.json({ message: "User added successfully" });
     }
 
-    // Edit fish price
+    
     if (type === "editfish") {
       const { fishID, fishName, kgPrice, boxPrice } = req.body;
 
@@ -197,7 +236,7 @@ app.post("/admin", async (req, res) => {
         return res.status(404).json({ ok: false, message: "Fish not found" });
       }
 
-      // Build update object only with provided values
+      
       const updateData = {};
       
       if (kgPrice !== undefined && kgPrice !== null && kgPrice !== "") {
@@ -220,7 +259,7 @@ app.post("/admin", async (req, res) => {
         return res.status(400).json({ ok: false, message: "Provide at least one price to update" });
       }
 
-      // Determine unit based on which price is higher
+      
       const finalKg = updateData.kgPrice !== undefined ? updateData.kgPrice : fish.kgPrice;
       const finalBox = updateData.boxPrice !== undefined ? updateData.boxPrice : fish.boxPrice;
       updateData.fishunit = finalKg > 0 ? "kg" : "box";
@@ -229,7 +268,7 @@ app.post("/admin", async (req, res) => {
       return res.json({ ok: true, message: "Fish price updated successfully", data: updated });
     }
 
-    // Delete fish
+    
     if (type === "deletefish") {
       const { fishID } = req.body;
       if (!fishID) {
@@ -242,23 +281,23 @@ app.post("/admin", async (req, res) => {
       return res.json({ message: "Fish Deleted successfully" });
     }
 
-    // Submit purchases for a customer into History and remove them from Purchase
+    
     if (type === "submittohistory") {
       try {
-        const { customerID, items = [], userID: submittedBy } = req.body;
+        const { customerID, items = [], userID: submittedBy, paidAmount = 0, isFullPaid = false } = req.body;
 
         if (!customerID) {
           return res.status(400).json({ ok: false, message: "Customer ID is required" });
         }
 
-        // Fetch customer & purchases
+        
         const customer = await Customer.findOne({ customerID });
         const purchases = await Purchase.find({ customerID });
 
         const customerName = customer ? customer.customername : "Unknown";
         const customerphone = customer ? customer.customerphone : undefined;
 
-        // resolve user info once and reuse, ensuring username is stored even if user record is deleted later
+      
         const userCache = new Map();
         const resolveUser = async (uid) => {
           if (!uid) return null;
@@ -274,10 +313,7 @@ app.post("/admin", async (req, res) => {
         const billedUserId = submittedBy || (purchases[0]?.userID) || (items[0]?.userID);
         const billedBy = await resolveUser(billedUserId);
 
-        // build items array combining server purchases + optional client items
         const itemsArray = [];
-
-        // server purchases -> item entries
         for (const p of purchases) {
           const fish = await Fish.findOne({ fishID: p.fishID });
           const unitNorm = String(p.unit || "kg");
@@ -299,7 +335,6 @@ app.post("/admin", async (req, res) => {
           });
         }
 
-        // client-provided pending items -> item entries
         if (Array.isArray(items) && items.length > 0) {
           for (const it of items) {
             const qty = Number(it.quantity ?? it.qty) || 0;
@@ -329,6 +364,9 @@ app.post("/admin", async (req, res) => {
         }
 
         const billTotal = itemsArray.reduce((s, it) => s + (Number(it.totalPrice) || 0), 0);
+        const paid = Number(paidAmount) || 0;
+        const clampedPaid = Math.max(0, Math.min(paid, billTotal));
+        const balanceForThisBill = billTotal - clampedPaid;
 
         const historyDoc = new History({
           customerID,
@@ -336,24 +374,23 @@ app.post("/admin", async (req, res) => {
           customerphone,
           items: itemsArray,
           totalPrice: billTotal,
+          paidAmount: clampedPaid,
+          isFullPaid: Boolean(isFullPaid) || (clampedPaid >= billTotal),
           billedBy,
           date: new Date(),
         });
 
         await historyDoc.save();
-
-        // Remove server purchases
         await Purchase.deleteMany({ customerID });
 
-        return res.json({ ok: true, message: "Purchase(s) moved to history" });
+        return res.json({ ok: true, message: "Purchase(s) moved to history", data: { billTotal, paid: clampedPaid, balance: balanceForThisBill } });
       }
       catch (err) {
         console.error("submittohistory error:", err);
-        return res.status(500).json({ ok: false, message: "Server error" });
+        return res.status(500).json({ ok: false, message: "Failed to submit to history" });
       }
     }
 
-    // Edit Bill
     if (type === "editBill") {
       const { _id, newPrice } = req.body;
       if (!_id || newPrice === undefined || newPrice === "") {
@@ -389,7 +426,7 @@ app.post("/admin", async (req, res) => {
       return res.json({ ok: true, message: "Purchase updated successfully", data: saved });
     }
 
-    //  Edit customer
+    
     if (type === "editcustomer") {
       console.log("✅ INSIDE editcustomer block in POST route");
       const { customerID, customername, customerphone } = req.body;
@@ -427,7 +464,7 @@ app.patch("/admin", async (req, res) => {
     console.log("Received PATCH request of type:", type);
 
 
-    //  Edit fish
+    
     if (type === "editfish") {
       const { fishID, kgPrice, boxPrice } = req.body;
       console.log("Edit fish request:", { fishID, kgPrice, boxPrice });
@@ -455,7 +492,7 @@ app.patch("/admin", async (req, res) => {
         return res.status(400).json({ ok: false, message: "Prices cannot be negative" });
       }
 
-      // Only update fields that have values (non-null)
+      
       const updateField = {};
       if (parsedKg !== null) {
         updateField.kgPrice = parsedKg;
@@ -486,7 +523,7 @@ app.patch("/admin", async (req, res) => {
 
 
 
-    //  Edit customer
+    
     if (type === "editcustomer") {
       console.log("✅ INSIDE editcustomer block in POST route");
       const { customerID, customername, customerphone } = req.body;
@@ -510,7 +547,7 @@ app.patch("/admin", async (req, res) => {
       return res.json({ message: "Customer updated successfully", data: updated });
     }
 
-    //Edit Bill
+    
     if (type === "editBill") {
       const { _id, newPrice } = req.body;
       if (!_id || newPrice === undefined || newPrice === "") {
@@ -546,7 +583,7 @@ app.patch("/admin", async (req, res) => {
       return res.json({ ok: true, message: "Purchase updated successfully", data: saved });
     }
 
-    //  Edit customer
+    
     if (type === "editcustomer") {
       const { customerID, customername, customerphone } = req.body;
       if (!customerID) {
@@ -578,7 +615,7 @@ app.patch("/admin", async (req, res) => {
 
 app.delete("/admin" ,async(req,res) => {
   try{
-    // Accept 'type' and ids from either body (JSON) or query string to be robust
+    
     const type = (req.body && req.body.type) || (req.query && req.query.type);
     const body = req.body || {};
     const query = req.query || {};
@@ -593,10 +630,10 @@ app.delete("/admin" ,async(req,res) => {
         return res.json({message:"Customer not found"});
       }
       
-      // Delete all history records for this customer
+      
       await History.deleteMany({customerID});
       
-      // Delete all pending purchases for this customer
+      
       await Purchase.deleteMany({customerID});
       
       return res.json({message:"Customer deleted successfully"});
@@ -675,14 +712,14 @@ app.get("/admin", async (req, res) => {
         purchases.map(async (p) => {
           const customer = await Customer.findOne({ customerID: p.customerID });
           const purchaseObj = p.toObject ? p.toObject() : p;
-          // ensure numeric fields
+          
           purchaseObj.quantity = Number(purchaseObj.quantity) || 0;
           purchaseObj.kgPrice = Number(purchaseObj.kgPrice) || 0;
           purchaseObj.boxPrice = Number(purchaseObj.boxPrice) || 0;
           purchaseObj.totalPrice = Number(purchaseObj.totalPrice) || (
             purchaseObj.unit === 'kg' ? purchaseObj.kgPrice * purchaseObj.quantity : purchaseObj.boxPrice * purchaseObj.quantity
           );
-          // attach customer info to help the UI
+          
           purchaseObj.customername = customer ? customer.customername : "Unknown";
           purchaseObj.customerphone = customer ? customer.customerphone : "N/A";
           return purchaseObj;
@@ -715,7 +752,7 @@ app.post("/user", async (req, res) => {
   try {
     const { userID, customerID, fishID, quantity, unit } = req.body;
 
-    // basic validation
+    
     if (userID === undefined || userID === null || !customerID || !fishID || quantity === undefined || !unit) {
       return res.status(400).json({ ok: false, message: "All fields are required (userID, customerID, fishID, quantity, unit)" });
     }
@@ -743,7 +780,7 @@ app.post("/user", async (req, res) => {
       return res.status(400).json({ ok: false, message: "Unit must be 'kg' or 'box'" });
     }
 
-    // Calculate total
+    
     const qtyNum = Number(quantity) || 0;
     const totalPrice = pricePerUnit * qtyNum;
 
@@ -759,12 +796,12 @@ app.post("/user", async (req, res) => {
       date: new Date(),
     });
 
-    // Log before saving
+    
     console.log("Purchase entry to save:", entry);
 
     await entry.save();
     
-    // Log after saving
+    
     console.log("Purchase saved successfully");
 
     return res.status(201).json({
@@ -782,7 +819,7 @@ app.post("/user", async (req, res) => {
 
 
 
-// --------------------- START SERVER ---------------------
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
