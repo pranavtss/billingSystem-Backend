@@ -33,7 +33,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const secretKey = "FishApp";
+const secretKey = process.env.JWT_SECRET || "FishApp";
 
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
 if (!process.env.MONGODB_URI) {
@@ -42,11 +42,12 @@ if (!process.env.MONGODB_URI) {
 
 mongoose.connect(MONGODB_URI)
 .then(() => {
-  console.log("Connected to MongoDB Atlas");
+  console.log("✅ Connected to MongoDB");
   createAdmin();
 })
 .catch((err) => {
-  console.error("Error connecting to MongoDB:", err);
+  console.error("❌ Error connecting to MongoDB:", err);
+  console.error("Make sure MongoDB is running locally or check MONGODB_URI in .env");
 });
 
 
@@ -66,16 +67,20 @@ app.get('/readyz', async (req, res) => {
 
 async function createAdmin() {
   try {
-    const existingAdmin = await Login.findOne({ userID: "admin" });
+    const adminID = process.env.ADMIN_ID || "admin";
+    const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+    const adminUsername = process.env.ADMIN_USERNAME || "Administrator";
+    
+    const existingAdmin = await Login.findOne({ userID: adminID });
     if (!existingAdmin) {
-      const hashedPassword = await bcrypt.hash("admin123", 10);
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
       await new Login({
-        userID: "admin",
+        userID: adminID,
         userpassword: hashedPassword,
-        username: "Administrator",
+        username: adminUsername,
         role: "admin",
       }).save();
-      console.log("Admin user created with userID: admin and password: admin123");
+      console.log(`Admin user created with userID: ${adminID}`);
     }
   } catch (err) {
     console.log({ "error": err });
