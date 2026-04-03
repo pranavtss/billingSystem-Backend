@@ -3,6 +3,9 @@
   "js/ts.tsserver.experimental.enableProjectDiagnostics": false,
   "js/ts.tsserver.automaticTypeAcquisition.enabled": false,
   "js/ts.validate.enabled": false,
+  "problems.exclude": {
+    "**/node_modules/**": true
+  },
   "js/ts.tsserver.watchOptions": {
     "watchDirectory": "useFsEvents",
     "excludeDirectories": [
