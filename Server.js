@@ -6,7 +6,7 @@ const helmet = require("helmet");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 
 const Login = require("./schema/loginschema");
 const Customer = require("./schema/customerschema");
@@ -19,7 +19,7 @@ app.use(express.json());
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5174';
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 
 app.use((req, res, next) => {
