@@ -54,6 +54,31 @@ The frontend is built with **React + Vite**.
 
 ---
 
+## Render Deployment (Backend)
+
+1. Push your backend branch to GitHub.
+2. In Render, click **New +** → **Web Service**.
+3. Connect repository: `pranavtss/billingSystem-Backend`.
+4. Use these settings:
+  * **Environment**: Node
+  * **Build Command**: `npm install`
+  * **Start Command**: `npm start`
+  * **Plan**: Free (or higher)
+5. Add environment variables in Render:
+  * `MONGODB_URI` = your Atlas URI (with `/billingSystem` DB name)
+  * `JWT_SECRET` = strong random string
+  * `ADMIN_ID` = admin
+  * `ADMIN_PASSWORD` = admin123 (change in production)
+  * `ADMIN_USERNAME` = Administrator
+  * `FRONTEND_ORIGIN` = your deployed frontend URL (exact URL)
+6. Deploy and verify:
+  * `https://<your-backend>.onrender.com/healthz`
+  * `https://<your-backend>.onrender.com/readyz`
+
+Note: Render injects `PORT` automatically. Server is configured to use `process.env.PORT`.
+
+---
+
 ## 🔐 Environment Variables
 
 Create a `.env` file in the root directory:
