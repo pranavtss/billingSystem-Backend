@@ -6,7 +6,7 @@ const helmet = require("helmet");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const PORT = 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 const Login = require("./schema/loginschema");
 const Customer = require("./schema/customerschema");
@@ -19,7 +19,7 @@ app.use(express.json());
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5174';
+const FRONTEND_ORIGIN = process.env.FRONTEND_URL || process.env.FRONTEND_ORIGIN || 'https://billingsystem1.onrender.com';
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 
 app.use((req, res, next) => {
@@ -50,11 +50,35 @@ mongoose.connect(MONGODB_URI)
   console.error("Make sure MongoDB is running locally or check MONGODB_URI in .env");
 });
 
+const isDatabaseReady = () => {
+  return mongoose.connection.readyState === 1 && !!mongoose.connection.db;
+};
+
+const requireDatabase = (req, res, next) => {
+  if (!isDatabaseReady()) {
+    return res.status(503).json({
+      ok: false,
+      message: "Database not ready. Please retry in a few seconds.",
+      state: mongoose.connection.readyState,
+    });
+  }
+  next();
+};
+
 
 app.get('/healthz', (req, res) => {
   res.status(200).json({ ok: true, status: 'healthy' });
 });
 app.get('/readyz', async (req, res) => {
+  if (!isDatabaseReady()) {
+    return res.status(503).json({
+      ok: false,
+      status: 'not-ready',
+      message: 'Database connection not established yet',
+      state: mongoose.connection.readyState,
+    });
+  }
+
   try {
     await mongoose.connection.db.admin().ping();
     res.status(200).json({ ok: true, status: 'ready' });
@@ -89,7 +113,7 @@ async function createAdmin() {
 
 
 
-app.post("/", async (req, res) => {
+app.post("/", requireDatabase, async (req, res) => {
   try {
     const { userID, userpassword } = req.body;
 
@@ -128,7 +152,7 @@ app.post("/", async (req, res) => {
 
 
 
-app.post("/admin", async (req, res) => {
+app.post("/admin", requireDatabase, async (req, res) => {
   try {
     const { type } = req.body;
     console.log("POST /admin received type:", type, "Type of type:", typeof type, "Body:", JSON.stringify(req.body));
@@ -459,11 +483,11 @@ app.post("/admin", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    return res.json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
-app.patch("/admin", async (req, res) => {
+app.patch("/admin", requireDatabase, async (req, res) => {
   try {
     const { type } = req.body;
     console.log("Received PATCH request of type:", type);
@@ -614,11 +638,11 @@ app.patch("/admin", async (req, res) => {
     return res.json({ message: "Invalid type" });
   } catch (err) {
     console.error(err);
-    return res.json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
-app.delete("/admin" ,async(req,res) => {
+app.delete("/admin" , requireDatabase, async(req,res) => {
   try{
     
     const type = (req.body && req.body.type) || (req.query && req.query.type);
@@ -686,11 +710,11 @@ app.delete("/admin" ,async(req,res) => {
   }
   catch(err){
     console.error(err);
-    return res.json({message:"Internal server error" });
+    return res.status(500).json({message:"Internal server error" });
   }
 })
 
-app.get("/admin", async (req, res) => {
+app.get("/admin", requireDatabase, async (req, res) => {
   try {
     const { type } = req.query;
 
@@ -738,11 +762,11 @@ app.get("/admin", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    return res.json({ ok: false, message: "Internal server error" });
+    return res.status(500).json({ ok: false, message: "Internal server error" });
   }
 });
 
-app.get("/history" , async(req,res)  => {
+app.get("/history" , requireDatabase, async(req,res)  => {
   try{
     const history = await History.find({}).sort({ createdAt: -1 });
     return res.json({ok:true , data:history});
@@ -753,7 +777,7 @@ app.get("/history" , async(req,res)  => {
   }
 })
 
-app.post("/user", async (req, res) => {
+app.post("/user", requireDatabase, async (req, res) => {
   try {
     const { userID, customerID, fishID, quantity, unit } = req.body;
 
@@ -817,7 +841,7 @@ app.post("/user", async (req, res) => {
 
   } catch (err) {
     console.log("POST /user error:", err);
-    return res.json({ ok: false, message: "Internal server error" });
+    return res.status(500).json({ ok: false, message: "Internal server error" });
   }
 });
 
