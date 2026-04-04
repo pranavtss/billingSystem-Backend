@@ -33,7 +33,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const secretKey = process.env.JWT_SECRET || "FishApp";
+const secretKey = process.env.JWT_SECRET;
 
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
 if (!process.env.MONGODB_URI) {
