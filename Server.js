@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -6,7 +6,14 @@ const helmet = require("helmet");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
+
+// Log the MongoDB URI being used (safely, without showing password)
+const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
+const uriDisplay = mongoUri.includes('mongodb+srv') 
+  ? mongoUri.replace(/:[^@]*@/, ':****@')  // Hide the password
+  : mongoUri;
+console.log(`📊 Using MongoDB: ${uriDisplay}`);
 
 const Login = require("./schema/loginschema");
 const Customer = require("./schema/customerschema");
@@ -61,12 +68,7 @@ app.use((req, res, next) => {
 
 const secretKey = process.env.JWT_SECRET || "FishApp";
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/BillingSystem";
-if (!process.env.MONGODB_URI) {
-  console.warn("MONGODB_URI not set in .env; using local fallback.");
-}
-
-mongoose.connect(MONGODB_URI)
+mongoose.connect(mongoUri)
 .then(() => {
   console.log("✅ Connected to MongoDB");
   createAdmin();
